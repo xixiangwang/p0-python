@@ -20,20 +20,20 @@ else:
  
 # 1–100 求和
 # for版本
-sum = 0
-for i in range(101):
-    sum += i
-print(f"求和={sum}")
+total = 0
+for i in range(1,101):
+    total += i
+print(f"求和={total}")
 
 # while版本
-sum = 0
+total = 0
 i = 1
 while i<=100:
-    sum += i
+    total += i
     i += 1
-print(f"求和={sum}")
+print(f"求和={total}")
 
 # 打印三角形
 n = int(input("请输入大小："))
 for i in range(1,n+1):
-    print("*" * i)     #竟然可以这样
+    print("*" * i)     # 竟然可以这样

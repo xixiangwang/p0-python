@@ -1,3 +1,9 @@
+# ===== lc_1_两数之和.py =====
+# 本文件包含：LC 1 两数之和（Easy）—— ① 暴力双重循环版（已注释保留）② 一趟 dict「先查再存」版
+# 用到：enumerate 拿下标 · dict 存「见过的数 → 下标」· need in d
+# 相关：面试出现率最高的一道 Easy；dict 计数同族 → lc_242_有效的字母异位词.py
+# ==========================
+
 # # 暴力解
 # class Solution(object):
 #     def twoSum(self, nums, target):

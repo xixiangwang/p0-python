@@ -1,3 +1,9 @@
+# ===== d5_dict_str_set.py =====
+# 本文件包含：① dict 最小必要（存/取/get/in/len/del/items）② 计数公式 d[k] = d.get(k, 0) + 1 ③ str 方法（strip/lower/split/join/replace/find/startswith）④ keys / values ⑤ 嵌套 dict 逐层剥 ⑥ set 交并差 + 去重
+# 说明：dict 与 str 两段整体注释掉了（当复习材料）；当前只有最后 set 四行在运行
+# 相关：计数公式的实战 → d5_wordcount.py · lc_242_有效的字母异位词.py
+# ================================
+
 # # dict字典
 # d = {}                  # 建空字典（⚠️ {} 是 dict，不是 set）
 # d["a"] = 1              # 存：键 -> 值

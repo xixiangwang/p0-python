@@ -1,3 +1,8 @@
+# ===== d3_rewrite_prime_narcissus_fib.py =====
+# 本文件包含：① 重写素数判断（标志位）② 重写水仙花数 ③ 重写斐波那契前 20 项
+# 相关：第一版（还含 100 内质数表）→ d2_loops_table_prime.py · d3_factorial_narcissus_fib.py
+# ===============================================
+
 # 重写素数  （标志位）
 n = int(input("请输入一个数字："))
 is_prime = True

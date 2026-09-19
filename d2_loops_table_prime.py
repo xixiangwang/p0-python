@@ -1,3 +1,8 @@
+# ===== d2_loops_table_prime.py =====
+# 本文件包含：① 九九乘法表（嵌套 for + end="\t"）② 质数判断（标志位）③ 1~100 求和（for 版 + while 版各一遍）④ 打印三角形（字符串乘法）
+# 相关：标志位的同题重写 → d3_rewrite_prime_narcissus_fib.py
+# =====================================
+
 # 九九乘法表（双重循环）
 for i in range(1,10):
     for j in range(1,i+1):

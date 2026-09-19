@@ -1,4 +1,6 @@
-# lc_1480.py
+# ===== lc_1480_一维数组的动态和.py =====
+# 本文件包含：LC 1480 一维数组的动态和（前缀和，边遍历边累加再 append）
+# =====================================
 class Solution:
     def runningSum(self, nums):
         running = 0

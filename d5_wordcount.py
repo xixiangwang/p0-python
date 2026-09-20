@@ -21,4 +21,7 @@ def wordcount(s):
         print(pairs[-i][0],pairs[-i][1])
 
     
-print(wordcount("abcdaaadcbbbbc"))
+wordcount("abcdaaadcbbbbc")
+wordcount("aabb")
+wordcount("aa")
+wordcount("")

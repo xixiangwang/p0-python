@@ -88,7 +88,7 @@ print(by_second([1,2,3]))
 
 # ⚠️ key=abs 里 abs 后面没有括号 —— 传的是"函数本身"，不是"调用结果"。
 nums = [-1,3,-2]
-print(sorted(nums))                # [-2, 1, 3]   默认拿元素本身比
+print(sorted(nums))                # [-2, -1, 3]   默认拿元素本身比
 print(sorted(nums,key = abs))      # [-1, -2, 3]   先求绝对值再比（1 < 2 < 3）
 
 # 你为了"按次数排"把数据改造成 [次数, 字符]；用 key= 就不用改数据，只改比较规则。

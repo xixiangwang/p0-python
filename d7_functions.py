@@ -75,6 +75,8 @@ print({n:i for i,n in enumerate(nums)})        # {'a': 0, 'b': 1, 'c': 2}
 # =============================2.7 lambda=========================
 # ⭐读法 lambda 参数: 返回值，只能写一个表达式
 # def 能写多条语句、能写文档字符串、能起名字反复用；lambda 只有一行、用完就扔。能用 def 的地方优先 def，lambda 只适合"就在这儿用一次"的小规则。
+# key= 不是通用参数！ 它只属于 sorted() / max() / min() 这三个"需要知道怎么比大小"的函数 —— 因为只有它们内部要拿这个规则去比较。
+
 def by_second(p):
     return p[1]
 print(by_second([1,2,3]))

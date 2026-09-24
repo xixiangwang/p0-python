@@ -31,7 +31,7 @@ with open("demo.txt","r",encoding="utf-8") as f:
         print(repr(line))                          # → '第一行\n' / '第二行\n' / '第三行\n'
 
 # ④ with 会自动关文件 —— 实证
-with open("demo.txt",encoding="utf-8"):
+with open("demo.txt",encoding="utf-8") as f:
     pass
 print(f.closed)                                    # → True    ← 出块就自动关了
 

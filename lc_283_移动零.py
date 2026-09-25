@@ -21,7 +21,6 @@ class Solution(object):
         for i in range(zero_count):
             nums.append(0)
         
-        return nums
 
 nums = [0,1,0,3,12]
 Solution().moveZeroes(nums)      # 先调用，让它改 nums

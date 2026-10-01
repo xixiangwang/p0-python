@@ -5,7 +5,7 @@
 
 # 方法一：暴力解
 class Solution(object):
-    def moveZeroes(self, nums):
+    def moveZeroes_brute(self, nums):
         """
         :type nums: List[int]
         :rtype: None Do not return anything, modify nums in-place instead.
@@ -22,14 +22,8 @@ class Solution(object):
             nums.append(0)
         
 
-nums = [0,1,0,3,12]
-Solution().moveZeroes(nums)      # 先调用，让它改 nums
-print(nums)                      # 再自己打出来 → [1,3,12,0,0]
-
-
-# 方法二(简洁版)
-class Solution(object):
-    def moveZeroes(self, nums):
+    # 方法二(简洁版)
+    def moveZeroes_simple(self, nums):
         """
         :type nums: List[int]
         :rtype: None Do not return anything, modify nums in-place instead.
@@ -38,8 +32,9 @@ class Solution(object):
             if n == 0:
                 nums.remove(0)
                 nums.append(0)
-# 方法三：快慢指针原地改（[0,1,0,3,12]→[1,3,12,0,0]）
-class Solution(object):
+
+
+    # 方法三：快慢指针原地改（[0,1,0,3,12]→[1,3,12,0,0]）
     def moveZeroes(self, nums):
         """
         :type nums: List[int]
@@ -50,7 +45,10 @@ class Solution(object):
             if nums[i] != 0:
                 nums[i],nums[j] = nums[j],nums[i]
                 j += 1
-nums = [0,1,0,3,12]
-Solution().moveZeroes(nums)      # 先调用，让它改 nums
-print(nums)                      # 再自己打出来 → [1,3,12,0,0]
 
+
+# ---------------- 本地自测：三个方法都跑一遍 ----------------
+for f in [Solution().moveZeroes, Solution().moveZeroes_brute, Solution().moveZeroes_simple]:
+    nums = [0,1,0,3,12]
+    f(nums)
+    print(f.__name__, "->", nums)

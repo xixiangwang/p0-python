@@ -1,9 +1,9 @@
 # =================================解法一：新建节点，头插法
 # Definition for singly-linked list.
-# class ListNode(object):
-#     def __init__(self, val=0, next=None):
-#         self.val = val
-#         self.next = next
+class ListNode(object):
+    def __init__(self, val=0, next=None):
+        self.val = val
+        self.next = next
 class Solution(object):
     def reverseList(self, head):
         """
@@ -25,8 +25,8 @@ class Solution(object):
 #     def __init__(self, val=0, next=None):
 #         self.val = val
 #         self.next = next
-class Solution(object):
-    def reverseList(self, head):
+
+    def reverseList_insert(self, head):
         """
         :type head: Optional[ListNode]
         :rtype: Optional[ListNode]
@@ -39,6 +39,27 @@ class Solution(object):
             prev = cur
             cur = nxt
         return prev
+
+
+# ---------------- 本地自测 ----------------
+def build(xs):
+    head = None
+    for v in reversed(xs):          # reversed() 内置函数：反过来遍历
+        head = ListNode(v, head)
+    return head
+
+
+def dump(head):
+    out = []
+    while head:
+        out.append(head.val)
+        head = head.next
+    return out
+
+
+for xs in [[1,2,3,4,5], [1,2], []]:
+    print(xs, "->", dump(Solution().reverseList(build(xs))),
+          "| 头插 ->", dump(Solution().reverseList_insert(build(xs))))
 
         
 

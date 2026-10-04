@@ -145,3 +145,12 @@ print(softmax(d).sum(axis=-1))
 # ex.sum(axis=-1)                 -> shape (2,)     ← 求和后那一维【消失】了
 # ex.sum(axis=-1, keepdims=True)  -> shape (2, 1)   ← 那一维【保留成 1】
 # 为什么 (2,3) / (2,) 会报错？ —— 这是 numpy 广播的规则
+
+
+# ⭐softmax
+
+# A. 数学上：不改变结果（恒等变换）,上下约分了
+# B. 工程上：防溢出 —— 这才是真正的原因
+def softmax_1(x):
+    e = np.exp(x-x.max(axis=-1,keepdims=True))
+    return e / e.sum(axis=-1,keepdims=True)

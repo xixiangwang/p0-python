@@ -55,3 +55,9 @@ print(a & b)                    # 交
 print(a | b)                    # 并
 print(a - b)                    # 差
 print(list({1,1,2,3,3}))        # 去重
+
+# ⭐补充set知识点
+
+# 1.set是python内置的哈希表
+# 2.set是大括号里有没有冒号，比如{1, 2, 3} → set，{"a": 1} → dict，{} → dict（这个坑必踩），空set必须写set()
+# 3.set{...}的特征：无序，自动去重，没有下标

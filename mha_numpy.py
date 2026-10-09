@@ -4,6 +4,9 @@
 #   assert 条件                 不满足就报错
 #   assert 条件, "错误消息"      不满足就报错，并带上消息
 
+# ② ⭐Wo的作用
+#   Wo 是「让多个头之间交流」的那一步
+
 
 import numpy as np
 

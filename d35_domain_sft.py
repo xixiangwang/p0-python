@@ -16,7 +16,7 @@ prompt 只到「招聘信息：xxx」为止，JSON 答案全部标成学习目�
 == 产物 ==
   lora_out/domain/final/      LoRA 权重（几百 KB）
 """
-import os, gc, time
+import os, gc, time, sys
 import torch
 from transformers import (AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig,
                           TrainingArguments, Trainer)
@@ -25,7 +25,14 @@ from datasets import load_dataset
 
 MODEL_PATH = r"C:\models\Qwen2.5-0.5B-Instruct"
 DATA_DIR   = r"C:\code\p0-python\data_domain"          # ★ d34 造的领域数据
-OUT_DIR    = r"C:\code\p0-python\lora_out\domain"       # ★ 和通用版分开存，不覆盖
+
+# ── 命令行参数（都可选，不传就是 v2 的老行为）──
+#   sys.argv[1] = 训练数据文件名（默认 train.jsonl；单位换算实验用 train_wan.jsonl）
+#   sys.argv[2] = 输出目录名（默认 domain_v2；实验用 domain_v3）
+TRAIN_FILE = sys.argv[1] if len(sys.argv) > 1 else "train.jsonl"
+OUT_TAG    = sys.argv[2] if len(sys.argv) > 2 else "domain_v2"
+OUT_DIR    = os.path.join(r"C:\code\p0-python\lora_out", OUT_TAG)
+print("本次训练：数据 = %s | 输出目录 = %s" % (TRAIN_FILE, OUT_TAG))
 
 # ★ 为什么是 512 而不是 d29 的 384：
 #   这个任务的输出是一整段 JSON（8 个字段），比 d29 的自由问答长得多。
@@ -52,7 +59,7 @@ model.print_trainable_parameters()
 
 # ───── ② 读 d34 造的数据 ─────
 ds = load_dataset("json", data_files={
-        "train": os.path.join(DATA_DIR, "train.jsonl"),
+        "train": os.path.join(DATA_DIR, TRAIN_FILE),
         "eval":  os.path.join(DATA_DIR, "eval.jsonl")})
 print("训练集 =", len(ds["train"]), " 评测集 =", len(ds["eval"]))
 train_ds = ds["train"]           # 只有 1080 条，全用，不用取子集

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """d37：分布外（OOD）评测 —— 100% 到底是真的还是背模板？（A2 第 6 节收尾）
 跑法：cd C:\code\p0-python
-      python d37_ood_eval.py
-（约 2~3 分钟，占满 GPU）
+      python d37_ood_eval.py                                        ← 评 v1（默认）
+      python d37_ood_eval.py lora_out\domain_v2\final v2            ← 评 v2
+      python d37_ood_eval.py lora_out\domain_v2\final v2 --tuned-only   ← 只跑微调模型（跳过基座）
+（约 3~9 分钟，占满 GPU）
 
 == 为什么要做这一份 ==
 d36 在「同源评测集」上跑出全字段完全正确率 0% → 100%。
@@ -37,7 +39,17 @@ from d36_domain_eval import (extract_json, compare, build_model,
                              evaluate, summarize, FIELDS)
 
 MODEL_PATH = r"C:\models\Qwen2.5-0.5B-Instruct"
-ADAPTER    = r"C:\code\p0-python\lora_out\domain\final"
+
+# ── 命令行参数（都是可选的，不传就退回 v1 的老行为）──
+#   sys.argv[1] = LoRA 权重目录
+#   sys.argv[2] = 标签，用来区分输出文件名（v1 / v2）
+#   带 --tuned-only 就跳过基座（基座在 v1 已经测过，数字直接复用）
+ADAPTER = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("--") \
+          else r"C:\code\p0-python\lora_out\domain\final"
+TAG = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else "v1"
+SKIP_BASE = "--tuned-only" in sys.argv
+print("本次评测：adapter = %s | 标签 = %s | 跳过基座 = %s" % (ADAPTER, TAG, SKIP_BASE))
+
 DATA_DIR   = r"C:\code\p0-python\data_domain"
 INSTRUCTION = ("从下面的招聘信息中抽取字段并输出 JSON，字段：company, title, city, "
                "education, experience_years, skills(数组), salary_min_k, salary_max_k。"
@@ -212,12 +224,28 @@ def main():
             f.write(json.dumps(x, ensure_ascii=False) + "\n")
     print("已存到", ood_path)
 
-    # ── ① 裸模型 ──
-    print("\n[1/2] 裸模型（未微调）在 OOD 上答题...")
-    m, t = build_model(None)
-    d_base = evaluate(m, t, ood)
-    s_base = summarize(d_base)
-    del m; gc.collect(); __import__("torch").cuda.empty_cache()
+    dims = ["heldout_template", "real_text", "noise"]
+
+    # ── ① 裸模型（带 --tuned-only 时复用 v1 的数字，省约 3 分钟）──
+    if SKIP_BASE:
+        # 依次找 v1 的基座结果：优先 _v1.json，其次老名字 ood_result.json
+        cand = [os.path.join(DATA_DIR, "ood_result_v1.json"),
+                os.path.join(DATA_DIR, "ood_result.json")]
+        prev = next((p for p in cand if os.path.exists(p)), None)
+        if prev is None:
+            raise SystemExit("找不到 v1 的基座结果，请先不带 --tuned-only 跑一次。")
+        _p = json.load(open(prev, encoding="utf-8"))
+        s_base = _p["base"]
+        base_dim = {dm: _p["by_dim"][dm]["base"] for dm in dims}
+        d_base = None
+        print("\n[1/2] 跳过基座，复用 v1 的数字（全对率 %.1f%%）" % (s_base["exact_match"] * 100))
+    else:
+        print("\n[1/2] 裸模型（未微调）在 OOD 上答题...")
+        m, t = build_model(None)
+        d_base = evaluate(m, t, ood)
+        s_base = summarize(d_base)
+        base_dim = None
+        del m; gc.collect(); __import__("torch").cuda.empty_cache()
 
     # ── ② 领域微调后 ──
     print("\n[2/2] 领域微调后在 OOD 上答题...")
@@ -235,7 +263,9 @@ def main():
                 "avg": sum(d["ok"] / d["total"] for d in sub) / n,
                 "exact": sum(1 for d in sub if d["ok"] == d["total"]) / n}
 
-    dims = ["heldout_template", "real_text", "noise"]
+    if base_dim is None:
+        base_dim = {dm: by_dim(d_base, dm) for dm in dims}
+    tuned_dim = {dm: by_dim(d_tuned, dm) for dm in dims}
     dim_cn = {"heldout_template": "① 留出模板（5 种没见过的句式）",
               "real_text": "② 真实感长文本（含陷阱数字 + 加分项干扰）",
               "noise": "③ 格式噪声（中文数字 + 无关段落）"}
@@ -251,8 +281,7 @@ def main():
     print("%-42s %10s %10s" % ("维度", "未微调", "微调后"))
     print("-" * 74)
     for dm in dims:
-        a = by_dim(d_base, dm)
-        b = by_dim(d_tuned, dm)
+        a, b = base_dim[dm], tuned_dim[dm]
         print("%-42s %9.1f%% %9.1f%%  (n=%d)" % (dim_cn[dm], a["exact"] * 100,
                                                  b["exact"] * 100, b["n"]))
     print("\n微调后 · 分字段准确率：")
@@ -262,12 +291,11 @@ def main():
 
     # ── 写文件 ──
     out = {"base": s_base, "tuned": s_tuned,
-           "by_dim": {dm: {"base": by_dim(d_base, dm), "tuned": by_dim(d_tuned, dm)}
-                      for dm in dims}}
-    with open(os.path.join(DATA_DIR, "ood_result.json"), "w", encoding="utf-8") as f:
+           "by_dim": {dm: {"base": base_dim[dm], "tuned": tuned_dim[dm]} for dm in dims}}
+    with open(os.path.join(DATA_DIR, "ood_result_%s.json" % TAG), "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
 
-    md = ["# d37 · 分布外（OOD）评测结果", "",
+    md = ["# d37 · 分布外（OOD）评测结果 · %s" % TAG, "",
           "测试集 %d 条，与训练集**不同模板、不同取值池、含噪声**。" % len(ood), "",
           "| 指标 | 未微调 | 微调后 |", "|---|---|---|",
           "| JSON 可解析率 | %.1f%% | %.1f%% |" % (s_base["parse_rate"]*100, s_tuned["parse_rate"]*100),
@@ -276,7 +304,7 @@ def main():
           "", "## 分维度（全字段完全正确率）", "",
           "| 维度 | 未微调 | 微调后 |", "|---|---|---|"]
     for dm in dims:
-        a, b = by_dim(d_base, dm), by_dim(d_tuned, dm)
+        a, b = base_dim[dm], tuned_dim[dm]
         md.append("| %s | %.1f%% | %.1f%% |" % (dim_cn[dm], a["exact"]*100, b["exact"]*100))
     md += ["", "## 微调后 · 分字段准确率", "", "| 字段 | 准确率 |", "|---|---|"]
     for f in FIELDS:
@@ -291,7 +319,7 @@ def main():
                    "- 标准答案：`%s`" % json.dumps(d["gold"], ensure_ascii=False),
                    "- 模型输出：`%s`" % d["pred_text"].replace("\n", " ")[:250],
                    "- 错在：%s" % ", ".join(d["bad"]), ""]
-    mp = os.path.join(DATA_DIR, "ood_result.md")
+    mp = os.path.join(DATA_DIR, "ood_result_%s.md" % TAG)
     with open(mp, "w", encoding="utf-8") as f:
         f.write("\n".join(md))
     print("\n✅ 已存到", mp)

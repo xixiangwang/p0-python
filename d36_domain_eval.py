@@ -21,7 +21,7 @@ d33 要人工给每题打 0/1/2，主观、慢、样本量上不去。
   data_domain/eval_result.md    —— 人看的对比报告
   data_domain/eval_result.json  —— 原始结果留档
 """
-import os, gc, json, time
+import os, gc, json, time, unicodedata
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import PeftModel
@@ -70,6 +70,25 @@ def extract_json(text):
 
 
 # ══════════════════════ 【看懂 ②】逐字段比对 ══════════════════════
+def norm_str(s):
+    """抹平「显示层」差异，但不动语义。
+
+    ⚠️ 为什么需要（OOD-B 那次踩的坑）：
+       模型输出 `算法研究员（NLP)` —— 全角左括号 + 半角右括号；
+       或者 `算法研究员 (NLP)` —— 半角括号 + 空格。
+       内容一字不差，只是显示形式不同，却被字符级严格比对照判成"错"。
+       title 准确率因此从 ~100% 掉到 70%，连带把总分从 ~75% 压到 50%。
+
+    只做两件事：
+      ① NFKC 规范化 —— 全角括号 / 字母 / 数字 → 半角
+      ② 去掉空格
+    ⚠️ 不做模糊匹配：'硕士' vs '硕士及以上' 依然判错；40 vs "40" 依然判错。
+    """
+    if not isinstance(s, str):
+        return s
+    return unicodedata.normalize("NFKC", s).replace(" ", "")
+
+
 def canon_list(x):
     """把「技能列表」规范化成可比较的形式。
 
@@ -78,11 +97,11 @@ def canon_list(x):
        {"skills": ["Go", {"name": "Rust"}]}）→ dict 不可哈希 → 直接 TypeError 崩掉。
        **打分函数崩了 = 什么都没测到。评测代码必须比被测模型更健壮。**
 
-    做法：把每个元素先 json 序列化成字符串，再排序 —— 任何元素都能比，且顺序无关。
+    做法：每个元素先 norm_str 再 json 序列化成字符串，排序 —— 任何元素都能比，且顺序无关。
     """
     if not isinstance(x, list):
         return None            # 不是数组（比如模型给了一个字符串）→ 上层判为不相等
-    return sorted(json.dumps(e, ensure_ascii=False, sort_keys=True) for e in x)
+    return sorted(json.dumps(norm_str(e), ensure_ascii=False, sort_keys=True) for e in x)
 
 
 def compare(gold, pred):
@@ -102,10 +121,9 @@ def compare(gold, pred):
                 cg, cp = canon_list(g), canon_list(p)
                 same = (cg is not None and cp is not None and cg == cp)
         else:
-            # 其余字段严格要求值相等。
-            # 注意：这是【严格】比对 —— 标准答案是数字 40，模型输出字符串 "40" 也算错。
-            # 因为 schema 的意义就是"格式必须固定"，格式漂了就等于没学会。
-            same = (g == p)
+            # 其余字段：先抹平显示层差异（全角/半角、空格）再比。
+            # 注意仍然是【严格】的 —— 数字 40 和字符串 "40" 算错，因为 schema 要求格式固定。
+            same = (norm_str(g) == norm_str(p))
         if same:
             ok += 1
         else:

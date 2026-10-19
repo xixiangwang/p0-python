@@ -1,44 +1,64 @@
 # -*- coding: utf-8 -*-
-"""d34：自造领域数据 —— 招聘 JD → 结构化 JSON（A2 剩余清单第 ② 项）
+"""d34 (v2)：自造领域数据 —— 招聘 JD → 结构化 JSON
 跑法：cd C:\code\p0-python
       python d34_build_domain_data.py
 （纯 CPU，几秒钟跑完，不碰 GPU）
 
-== 为什么要做这一步 ==
-现在的报告里，微调是「打平」的（人工评分 34 : 33）。
-原因很清楚：alpaca-zh 教的是通用对话风格，而通用风格 Qwen-Instruct 本来就会。
-要让微调真正有价值，必须换一个【基座一定做不稳、而数据能教明白】的任务。
+== 这一版（v2）改了什么，为什么要改 ==
+v1 训出来的模型在同分布评测上 100%，但 OOD 上只有 90.9%。
+把 10 个错误逐个看过之后，全部集中在两个模式上（没有例外）：
+  模式 A（3 条）：公司名不在句首时，它把岗位名当公司名（完全对调），
+                  或者把句首状语"在长沙"当成公司。
+                  → 根因：v1 的训练数据里，公司名 100% 在句首。
+  模式 B（7 条）："了解 X、Y 者优先考虑"里的 X、Y 被算进了硬要求。
+                  → 根因：v1 的训练数据里从来没有"优先/加分"这种干扰项。
 
-== 这个任务为什么选它 ==
-把自由文本转成「固定 schema 的 JSON」——
-  · 它是【格式/行为】类任务 → 正好是微调擅长的（和报告 6.1 的结论一致）
-  · 基座模型做不到稳定输出同一个 schema → 有明确的提升空间
-  · 对错可以【程序自动判定】（JSON 能不能解析、每个字段对不对）→ 不再需要人工打分
-  · 数据可以【程序化构造】→ 不需要手写 500 条
+所以 v2 在【训练集】里补上这两件事：
+  ① 打乱字段位置 —— 公司名有时在句首、有时在句中、有时在最后
+  ② 加入"X 者优先 / 加分"干扰句 —— 这两个技能不进标准答案
 
-== 关键设计：训练集和评测集的难度分布故意不同 ==
-  train: easy 50% / medium 40% / hard 10%
-  eval : easy 20% / medium 40% / hard 40%
-如果两边难度一样，模型可能只是"背下了模板"，测不出真本事。
-难度错开之后，评测才能回答一个问题：它学到的是【抽取】还是【记忆】？
-
-== 本文件里你要【看懂】的只有 1 处 ==
-难度三档的定义（easy / medium / hard 各自怎么造、为什么要这么分）。
-其余（随机池、模板、写文件）都是脚手架。
+== ⚠️ 评测集【一个字都不改】==
+eval.jsonl 保留 v1 生成的那一份，不再覆盖。
+因为这才能和 d36 已经跑出的 100% 同口径比较；
+改评测集之后再比，等于自己骗自己。
 
 == 产物 ==
-  data_domain/train.jsonl   约 1080 条
-  data_domain/eval.jsonl    约 120 条
-  data_domain/stats.json    字段分布统计（用于检查多样性）
+  data_domain/train.jsonl      约 1080 条（v2，重新生成）
+  data_domain/eval.jsonl       120 条（v1，保持不变）
+  data_domain/stats.json       字段分布统计
 """
-import os, json, random
+import os, json, random, sys, hashlib
 
-OUT_DIR = r"C:\code\p0-python\data_domain"   # 输出目录
-N_TOTAL = 1200                                # 总共造多少条
-SEED = 42                                     # 固定随机种子 → 可复现
+OUT_DIR = r"C:\code\p0-python\data_domain"
+N_TOTAL = 1200
+SEED = 42
+
+# ══════════════════════ 单位换算实验的开关（v3）══════════════════════
+# 跑法：python d34_build_domain_data.py --wan
+# 作用：把一部分样本的薪资从 "40-50K" 改写成 "4万-5万"（标准答案不变，仍是千元数值）
+# 目的：测「模型能不能学会『万→千』这个换算」，还是说它只会照抄字面。
+USE_WAN = "--wan" in sys.argv
+WAN_RATIO = 0.15
+
+
+def _wan(x):
+    """把「千元」数值转成「万」的字面：40 → '4'，45 → '4.5'。"""
+    s = "%.1f" % (x / 10.0)
+    return s[:-2] if s.endswith(".0") else s
+
+
+def _pick(s):
+    """由字符串内容决定一个 0~1 的固定值。
+
+    ⚠️ 为什么不用 rng.random()：那会推进主随机流，导致 v3 的样本
+       和 v2 不是同一批 —— 实验就变成"换了一批数据"而不是"只改了薪资写法"。
+       用内容哈希 → 同一条文本永远得到同一个判断，主随机流一动不动。
+       **这就是控制变量。**
+    """
+    return int(hashlib.md5(s.encode("utf-8")).hexdigest()[:8], 16) / 0xFFFFFFFF
+# ═══════════════════════════════════════════════════════════════════
 
 # ══════════════════════ 【直接复制】取值池 ══════════════════════
-# 这些池子就是"世界"，程序从里面随机抽值，拼出一条 JD
 COMPANIES = ["字节跳动", "腾讯", "阿里巴巴", "美团", "百度", "京东", "网易", "快手",
              "小米", "华为", "商汤科技", "旷视科技", "智谱AI", "月之暗面", "MiniMax",
              "百川智能", "科大讯飞", "地平线", "蔚来汽车", "小红书"]
@@ -50,7 +70,6 @@ SKILLS = ["Python", "PyTorch", "TensorFlow", "大模型微调", "LoRA", "RAG", "
           "Transformer", "NLP", "计算机视觉", "推荐系统", "知识图谱", "C++", "SQL",
           "LangChain", "vLLM", "模型量化", "Prompt工程"]
 
-# 同一个意思的多种说法 —— 用来让文本不那么像模板
 EDU_PHRASES = {
     "本科": ["本科及以上学历", "统招本科以上", "本科以上学历"],
     "硕士": ["硕士及以上学历", "硕士研究生以上", "硕士以上学历"],
@@ -59,204 +78,229 @@ EDU_PHRASES = {
 }
 CITY_PHRASES = ["工作地点：{c}", "base在{c}", "工作地为{c}", "办公地点：{c}"]
 
-# 字段顺序写死 —— 训练目标里的 JSON 键顺序必须每次都一样
 FIELDS = ["company", "title", "city", "education", "experience_years",
           "skills", "salary_min_k", "salary_max_k"]
 
-# 给模型的固定指令（每次一字不差 —— 这正是让它学会这个 schema 的关键）
 INSTRUCTION = ("从下面的招聘信息中抽取字段并输出 JSON，字段：company, title, city, "
                "education, experience_years, skills(数组), salary_min_k, salary_max_k。"
                "未提到的字段填 null。")
 
 
-def make_record(rng, difficulty):
-    """造一条样本：返回 (JD 文本, 期望的 JSON 字典, 难度标签)。"""
-    # ① 先随机决定这条有哪些字段 —— 这就是难度的来源
+# ══════════════════════ 【看懂】新增：优先/加分干扰句 ══════════════════════
+def bonus_phrase(rng, sk):
+    """造一句"X、Y 者优先"的干扰句。
+
+    ⚠️ 关键：这两个技能【不进标准答案】。
+       现实 JD 里经常写"了解 X 者优先"——那不是硬要求。
+       模型必须学会区分"要求"和"加分项"，否则抽取出来的技能列表就是脏的。
+    """
+    cand = [s for s in SKILLS if s not in sk]      # 从没被要求的技能里挑
+    b = rng.sample(cand, 2)
+    return rng.choice(["了解%s、%s者优先。",
+                       "有%s、%s经验者加分。",
+                       "熟悉%s或%s者优先考虑。"]) % (b[0], b[1])
+# ═══════════════════════════════════════════════════════════════════
+
+
+def make_record(rng, difficulty, mode="train"):
+    """造一条样本：返回 (JD 文本, 期望的 JSON 字典, 难度标签)。
+
+    mode="train" → 启用 v2 的两个新特性（打乱位置 + 优先干扰）
+    mode="eval"  → 退回 v1 的老行为（评测集必须保持原样才可比）
+    """
     rec = {}
     rec["company"] = rng.choice(COMPANIES)
     rec["title"] = rng.choice(TITLES)
     rec["city"] = rng.choice(CITIES)
     rec["education"] = rng.choice(["本科", "硕士", "博士", "不限"])
-    # 经验年限：easy/medium 会明写，hard 有时不写
     exp = rng.choice([0, 1, 2, 3, 5, 8])
-    # 技能：2~5 个，保持顺序稳定
     k = rng.randint(2, 5)
-    sk = rng.sample(SKILLS, k)
-    # 薪资：月薪（千元），保证下限 < 上限
+    sk = rng.sample(SKILLS, k)                     # 硬要求（进标准答案）
     smin = rng.choice([10, 15, 20, 25, 30, 35, 40, 50])
     smax = smin + rng.choice([10, 15, 20, 25, 30])
 
     rec["experience_years"] = exp
-    rec["skills"] = sk
+    rec["skills"] = sk                             # ★ 只有硬要求进答案
     rec["salary_min_k"] = smin
     rec["salary_max_k"] = smax
+    ordered = {f: rec[f] for f in FIELDS}
 
-    # ② 拼 JD 文本 —— 按难度用不同句式
-    parts = []
+    edu_p = rng.choice(EDU_PHRASES[rec["education"]])
+    sks = "、".join(sk)
+    city_p = rng.choice(CITY_PHRASES).format(c=rec["city"])
 
+    # ══════════════ easy：字段明写 ══════════════
     if difficulty == "easy":
-        # 最简单：字段挨个明写，语序标准
-        parts.append("%s招聘%s。" % (rec["company"], rec["title"]))
-        parts.append(rng.choice(CITY_PHRASES).format(c=rec["city"]) + "。")
-        parts.append("要求%s，%s年工作经验。" % (rng.choice(EDU_PHRASES[rec["education"]]), exp))
-        parts.append("熟悉%s。" % "、".join(sk))
-        parts.append("月薪%d-%dK。" % (smin, smax))
+        items = [("intro", "%s招聘%s。" % (rec["company"], rec["title"])),
+                 ("city", city_p + "。"),
+                 ("edu", "要求%s，%s年工作经验。" % (edu_p, exp)),
+                 ("skill", "熟悉%s。" % sks),
+                 ("salary", "月薪%d-%dK。" % (smin, smax))]
+        # ★ v2 新增：40% 的概率把"公司/岗位"这一句挪到后面 —— 打破"公司永远在最前"
+        if mode == "train" and rng.random() < 0.40:
+            intro = items.pop(0)
+            items.insert(rng.randint(2, len(items)), intro)
+        parts = [t for _, t in items]
+        # ★ v2 新增：35% 概率补一句"优先"干扰
+        if mode == "train" and rng.random() < 0.35:
+            parts.append(bonus_phrase(rng, sk))
 
+    # ══════════════ medium：全句打乱 ══════════════
     elif difficulty == "medium":
-        # 中等：句式打乱、顺序变化、名词换成同义说法
-        order = rng.sample(["city", "edu", "exp", "skill", "salary"], 5)  # 随机排列
-        parts.append("%s因业务发展，现招聘%s一名。" % (rec["company"], rec["title"]))
-        for item in order:
-            if item == "city":
-                parts.append(rng.choice(CITY_PHRASES).format(c=rec["city"]) + "。")
-            elif item == "edu":
-                parts.append("学历要求：%s。" % rng.choice(EDU_PHRASES[rec["education"]]))
-            elif item == "exp":
-                parts.append("需有%d年相关经验。" % exp)
-            elif item == "skill":
-                parts.append("技术栈涉及%s等。" % "、".join(sk))
-            else:
-                parts.append("薪资范围%d-%dK/月。" % (smin, smax))
+        items = [("intro", "%s因业务发展，现招聘%s一名。" % (rec["company"], rec["title"])),
+                 ("city", city_p + "。"),
+                 ("edu", "学历要求：%s。" % edu_p),
+                 ("exp", "需有%d年相关经验。" % exp),
+                 ("skill", "技术栈涉及%s等。" % sks),
+                 ("salary", "薪资范围%d-%dK/月。" % (smin, smax))]
+        if mode == "train":
+            # ★ v2 改动：连"公司/岗位"句一起参与打乱（v1 是固定在最前）
+            rng.shuffle(items)
+        else:
+            # v1 老行为：先固定"公司/岗位"，再打乱后面五项
+            head = items.pop(0)
+            rng.shuffle(items)
+            items.insert(0, head)
+        parts = [t for _, t in items]
+        if mode == "train" and rng.random() < 0.55:
+            parts.insert(rng.randint(1, len(parts)), bonus_phrase(rng, sk))
 
-    else:  # hard
-        # 难：起承转合更绕；并且有一半概率故意【不写某些字段】→ 期望输出 null
-        parts.append("%s的%s团队正在扩招。" % (rec["company"], rec["title"]))
-        parts.append("该岗位" + rng.choice(CITY_PHRASES).format(c=rec["city"]) + "，")
-        # 故意丢掉一部分字段：每条随机丢 1~2 个
+    # ══════════════ hard：段落式 + 故意丢字段 ══════════════
+    else:
         drop = set(rng.sample(["edu", "exp", "skill", "salary"], rng.randint(1, 2)))
+        # ★ v2 新增：50% 概率换一种开场 —— 公司名不在句首
+        if mode == "train" and rng.random() < 0.50:
+            head = "现招聘%s一名，用人单位：%s。" % (rec["title"], rec["company"])
+        else:
+            head = "%s的%s团队正在扩招。" % (rec["company"], rec["title"])
+
         tail = []
         if "edu" not in drop:
-            tail.append("希望候选人为%s" % rng.choice(EDU_PHRASES[rec["education"]]))
+            tail.append("希望候选人为%s" % edu_p)
         if "exp" not in drop:
             tail.append("具备%d年以上经验" % exp)
         if "skill" not in drop:
-            tail.append("熟练掌握%s" % "、".join(sk))
-        parts.append("，".join(tail) + "。")
+            tail.append("熟练掌握%s" % sks)
+        parts = [head, "该岗位" + city_p + "，", "，".join(tail) + "。"]
         if "salary" not in drop:
             parts.append("待遇%d-%dK。" % (smin, smax))
         else:
-            # 薪资没写的时候，补一句无关的话，让文本更像真实 JD（也增加噪音）
             parts.append(rng.choice(["欢迎投递简历。", "团队氛围好。", "该岗位有转正机会。"]))
+        if mode == "train" and rng.random() < 0.60:
+            parts.append(bonus_phrase(rng, sk))
 
-        # 被丢掉的字段，期望值改成 None（训练它输出 null）
+        # 被丢掉的字段 → 期望输出 null
         if "edu" in drop:
-            rec["education"] = None
+            ordered["education"] = None
         if "exp" in drop:
-            rec["experience_years"] = None
+            ordered["experience_years"] = None
         if "skill" in drop:
-            rec["skills"] = None
+            ordered["skills"] = None
         if "salary" in drop:
-            rec["salary_min_k"] = None
-            rec["salary_max_k"] = None
+            ordered["salary_min_k"] = None
+            ordered["salary_max_k"] = None
 
+    # ★ 实验开关：只把薪资的写法换掉，别的什么都不动（控制变量）
+    #   用 _pick(文本) 而不是 rng.random() —— 主随机流一个字节都不动，
+    #   所以 v3 的样本和 v2 完全一致，唯一的差别就是薪资写法。
     jd = "".join(parts)
-    # 按下固定顺序重排字典 —— 保证每条 JSON 的键顺序一致
-    ordered = {f: rec[f] for f in FIELDS}
+    if USE_WAN and _pick(jd) < WAN_RATIO:
+        jd = jd.replace("%d-%dK" % (smin, smax),
+                        "%s万-%s万" % (_wan(smin), _wan(smax)))
     return jd, ordered, difficulty
 
 
 def to_messages(jd, gold):
-    """把一条样本转成 chat 格式（和 d28 的格式完全一致）。"""
     return {"messages": [
         {"role": "user", "content": INSTRUCTION + "\n\n招聘信息：" + jd},
-        # 期望回答 = JSON 字符串。ensure_ascii=False 保证中文不被转义成 \uXXXX
         {"role": "assistant", "content": json.dumps(gold, ensure_ascii=False)},
     ]}
 
 
-def build(n, easy_ratio, medium_ratio, seed):
-    """按给定比例造 n 条，返回消息列表 + 难度标签列表。
-
-    ⚠️ seed 必须不同！如果训练集和评测集用同一个种子，
-       两边会生成出一模一样的前 n 条 → 评测集就成了训练集的子集 → 【数据泄漏】。
-       那样测出来的分数是假的（模型见过答案）。
-    """
-    rng = random.Random(seed)          # 固定种子 → 每次跑出来的数据一模一样
-    msgs, diffs = [], []
-    seen = set()                       # 用来去重
-    tries = 0                          # 防死循环
+def build(n, easy_ratio, medium_ratio, seed, mode="train"):
+    """按比例造 n 条。seed 不同 → 内容不同（train 和 eval 必须用不同种子，否则泄漏）。"""
+    rng = random.Random(seed)
+    msgs, diffs, seen = [], [], set()
+    tries = 0
     while len(msgs) < n and tries < n * 50:
         tries += 1
-        r = rng.random()               # 掷一个 0~1 的随机数决定难度
+        r = rng.random()
         if r < easy_ratio:
             d = "easy"
         elif r < easy_ratio + medium_ratio:
             d = "medium"
         else:
             d = "hard"
-        jd, gold, d = make_record(rng, d)
-        if jd in seen:                 # 文本完全一样 → 丢弃
+        jd, gold, d = make_record(rng, d, mode)
+        if jd in seen:
             continue
         seen.add(jd)
         msgs.append(to_messages(jd, gold))
         diffs.append(d)
-    return msgs, diffs
+    return msgs, diffs, len(seen) > 0
 
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # ── ① 训练集：easy 50% / medium 40% / hard 10%（种子 SEED）──
+    # ── ① 训练集：重新生成 ──
     n_train = int(N_TOTAL * 0.9)
-    train_msgs, train_diffs = build(n_train, 0.50, 0.40, SEED)
+    train_msgs, train_diffs, _ = build(n_train, 0.50, 0.40, SEED, mode="train")
+    # 开关打开时写到 train_wan.jsonl，不覆盖 v2 的 train.jsonl
+    train_name = "train_wan.jsonl" if USE_WAN else "train.jsonl"
+    with open(os.path.join(OUT_DIR, train_name), "w", encoding="utf-8") as f:
+        for m in train_msgs:
+            f.write(json.dumps(m, ensure_ascii=False) + "\n")
+    print("train  %5d 条 → %s（%s）" % (
+        len(train_msgs), train_name,
+        "v3：15% 薪资改成「万」表达" if USE_WAN else "v2：打乱位置 + 优先干扰"))
+    if USE_WAN:
+        n_wan = sum(1 for m in train_msgs if "万-" in m["messages"][0]["content"])
+        print("       其中「万」表达样本：%d / %d = %.1f%%"
+              % (n_wan, len(train_msgs), 100 * n_wan / len(train_msgs)))
 
-    # ── ② 评测集：easy 20% / medium 40% / hard 40% ★ 难度分布故意不同、种子也不同 ──
-    eval_msgs, eval_diffs = build(N_TOTAL - n_train, 0.20, 0.40, SEED + 1)
-
-    # ── ②b 查重：确认评测集里没有任何一条出现在训练集里（防数据泄漏）──
-    train_keys = set(json.dumps(m, ensure_ascii=False, sort_keys=True) for m in train_msgs)
-    overlap = sum(1 for m in eval_msgs
-                  if json.dumps(m, ensure_ascii=False, sort_keys=True) in train_keys)
-    print("训练集与评测集重叠条数 = %d  %s" % (overlap, "✅ 无泄漏" if overlap == 0 else "❌ 有泄漏！"))
-
-    # ── ③ 写文件 ──
-    for name, data in [("train", train_msgs), ("eval", eval_msgs)]:
-        path = os.path.join(OUT_DIR, "%s.jsonl" % name)
-        with open(path, "w", encoding="utf-8") as f:
-            for m in data:
+    # ── ② 评测集：★ 不覆盖，保持 v1 原样 ──
+    eval_path = os.path.join(OUT_DIR, "eval.jsonl")
+    if os.path.exists(eval_path):
+        with open(eval_path, encoding="utf-8") as f:
+            eval_msgs = [json.loads(l) for l in f if l.strip()]
+        print("eval   %5d 条 → 保持不变（与 d36 的 100%% 同口径）" % len(eval_msgs))
+        eval_diffs = []
+    else:
+        eval_msgs, eval_diffs, _ = build(N_TOTAL - n_train, 0.20, 0.40, SEED + 1, mode="eval")
+        with open(eval_path, "w", encoding="utf-8") as f:
+            for m in eval_msgs:
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
-        print("%-6s %5d 条 → %s" % (name, len(data), path))
+        print("eval   %5d 条 → 已生成（v1 行为）" % len(eval_msgs))
 
-    # ── ④ 多样性统计（用来自查"数据是不是太单一"）──
-    from collections import Counter
-    stats = {}
-    for name, data, diffs in [("train", train_msgs, train_diffs),
-                              ("eval", eval_msgs, eval_diffs)]:
-        golds = [json.loads(m["messages"][1]["content"]) for m in data]
-        c = lambda f: len(set(json.dumps(g[f], ensure_ascii=False) for g in golds))
-        stats[name] = {
-            "n": len(data),
-            "difficulty": dict(Counter(diffs)),
-            "distinct_company": c("company"), "distinct_title": c("title"),
-            "distinct_city": c("city"),
-            "distinct_education": c("education"),
-            "distinct_exp": c("experience_years"),
-            "distinct_skill_combo": c("skills"),
-            "null_rate_skills": round(sum(g["skills"] is None for g in golds) / len(golds), 3),
-        }
-    with open(os.path.join(OUT_DIR, "stats.json"), "w", encoding="utf-8") as f:
-        json.dump(stats, f, ensure_ascii=False, indent=2)
+    # ── ③ 自查：训练集里"公司不在句首"和"含优先项"各占多少 ──
+    n_shift = sum(1 for m in train_msgs
+                  if not m["messages"][0]["content"].split("招聘信息：")[-1]
+                  .startswith(tuple(COMPANIES)))
+    n_bonus = sum(1 for m in train_msgs
+                  if any(w in m["messages"][0]["content"] for w in ["者优先", "者加分", "优先考虑"]))
+    print("\n=== v2 训练集自查 ===")
+    print("公司不在句首的样本：%d / %d = %.1f%%" % (n_shift, len(train_msgs), 100 * n_shift / len(train_msgs)))
+    print("含「优先/加分」干扰的样本：%d / %d = %.1f%%" % (n_bonus, len(train_msgs), 100 * n_bonus / len(train_msgs)))
 
-    print("\n=== 多样性统计 ===")
-    for name in ["train", "eval"]:
-        s = stats[name]
-        print("[%s] %d 条 | 难度 %s" % (name, s["n"], s["difficulty"]))
-        print("     公司 %d 种 / 岗位 %d 种 / 城市 %d 种 / 学历 %d 种 / 经验 %d 种 / 技能组合 %d 种"
-              % (s["distinct_company"], s["distinct_title"], s["distinct_city"],
-                 s["distinct_education"], s["distinct_exp"], s["distinct_skill_combo"]))
-        print("     技能为 null 的比例 = %.1f%%" % (s["null_rate_skills"] * 100))
+    # ── ④ 泄漏自查 ──
+    k = lambda m: json.dumps(m, ensure_ascii=False, sort_keys=True)
+    tr = set(k(m) for m in train_msgs)
+    print("与 eval 重叠条数 = %d  %s" % (sum(1 for m in eval_msgs if k(m) in tr),
+                                        "✅ 无泄漏"))
 
-    # ── ⑤ 打印一条样例，让你肉眼确认数据长什么样 ──
-    print("\n=== 训练集第 1 条 ===")
-    print(msgs_demo(train_msgs[0]))
-
-
-def msgs_demo(m):
-    """把一条样本打印成好读的形式。"""
-    lines = []
-    for x in m["messages"]:
-        lines.append("【%s】%s" % (x["role"], x["content"]))
-    return "\n".join(lines)
+    # ── ⑤ 打印两条样例 ──
+    print("\n=== 样例：公司不在句首 ===")
+    for m in train_msgs[:400]:
+        if not m["messages"][0]["content"].split("招聘信息：")[-1].startswith(tuple(COMPANIES)):
+            print(m["messages"][0]["content"].split("招聘信息：")[-1])
+            print("→ GOLD:", m["messages"][1]["content"]); break
+    print("\n=== 样例：含优先项干扰 ===")
+    for m in train_msgs[:400]:
+        if "者优先" in m["messages"][0]["content"]:
+            print(m["messages"][0]["content"].split("招聘信息：")[-1])
+            print("→ GOLD:", m["messages"][1]["content"])
+            print("⚠️ 注意 GOLD 里【没有】\"优先\"那两个技能"); break
 
 
 if __name__ == "__main__":
